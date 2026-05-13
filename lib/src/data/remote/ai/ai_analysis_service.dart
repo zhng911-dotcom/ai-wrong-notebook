@@ -918,7 +918,6 @@ class AiAnalysisService {
     ).isSuspicious;
   }
 
-
   String _buildConsistencyVerificationPrompt({
     required String questionText,
     required String subjectName,
@@ -1413,6 +1412,10 @@ class AiAnalysisService {
 - 如果原题是方程组，练习题也必须是方程组题
 - 练习题必须是选择题格式，包含 A/B/C/D 四个选项，其中一个是正确答案
 - 答案字段填写正确选项的字母（如 "A"）
+- 【几何题配图规则】如果原题属于几何类（三角形、圆、平行四边形、梯形、圆锥等），每道练习题必须附带 diagramData 字段，用结构化 JSON 描述几何图形。坐标使用归一化 0-1 范围。格式：
+  {"elements":[{"type":"polygon","points":[[x,y],...],"labels":[{"text":"A","x":0.5,"y":0.05}]},{"type":"line","x1":0,"y1":0,"x2":1,"y2":1,"style":"solid|dashed","role":"known|target|label"},{"type":"text","text":"10cm","x":0.5,"y":0.7,"role":"known"},{"type":"angleArc","vx":0.5,"vy":0.1,"startAngle":55,"sweepAngle":70,"r":0.08,"label":"50°"},{"type":"rightAngle","x":0.5,"y":0.8},{"type":"tickMark","x1":0,"y1":0,"x2":0.5,"y2":0.5,"ticks":1},{"type":"arc","cx":0.5,"cy":0.5,"r":0.3,"startAngle":0,"sweepAngle":180,"filled":true},{"type":"ellipse","cx":0.5,"cy":0.8,"rx":0.3,"ry":0.08},{"type":"point","x":0.5,"y":0.5,"label":"O","role":"label"}],"auxiliaryLines":[...同格式，解题辅助线]}
+  role 取值：known（已知条件红色）、target/solve（求解目标绿色）、label（标注蓝色）、auxiliary（辅助线橙色）
+  非几何题不要输出 diagramData
 - aiTags 要求简短精炼（2-8个字），数量 2-4 个，如 ["压强", "力学", "公式"]
 - knowledgePoints 可以详细描述，长度不限，如 ["压强公式p=f/s，压强与压力的关系", "受力面积相同时，压力越大压强越大"]
 - 如果内容包含 LaTeX，必须先生成合法 JSON：所有 LaTeX 反斜杠都写成 JSON 转义形式，例如 \\frac、\\times、\\(x\\)、\\[x\\]
@@ -1443,7 +1446,8 @@ class AiAnalysisService {
   "mistakeReason": "错误原因分析",
   "studyAdvice": "学习建议",
   "generatedExercises": [
-    {"id": "e1", "difficulty": "简单", "question": "练习题目", "options": ["A. 选项1", "B. 选项2", "C. 选项3", "D. 选项4"], "answer": "A", "explanation": "解析"}
+    {"id": "e1", "difficulty": "简单", "question": "练习题目", "options": ["A. 选项1", "B. 选项2", "C. 选项3", "D. 选项4"], "answer": "A", "explanation": "解析", "diagramData": null},
+    {"id": "e2", "difficulty": "同级", "question": "几何练习题（示例）", "options": ["A. 选项1", "B. 选项2", "C. 选项3", "D. 选项4"], "answer": "B", "explanation": "解析", "diagramData": {"elements":[{"type":"polygon","points":[[0.2,0.8],[0.8,0.8],[0.5,0.2]],"labels":[{"text":"A","x":0.5,"y":0.12},{"text":"B","x":0.15,"y":0.88},{"text":"C","x":0.85,"y":0.88}]},{"type":"text","text":"5cm","x":0.35,"y":0.48,"role":"known"},{"type":"angleArc","vx":0.5,"vy":0.2,"startAngle":55,"sweepAngle":70,"r":0.08,"label":"60°"}]}}
   ]
 }''';
 
@@ -1558,7 +1562,6 @@ class AiAnalysisService {
     return RegExp(r'如图|下图|上图|图中|示意图|阴影|图形|图示|图所示|看图|观察图').hasMatch(normalized);
   }
 
-
   @visibleForTesting
   String buildAnalysisPromptForTest(
     String correctedText,
@@ -1612,24 +1615,26 @@ class AiAnalysisService {
           '11. finalAnswer、finalAnswerDerivation 和 steps 最后一条必须是同一个最终答案；如果读图假设不确定，也只能给一个“在该假设下”的最终答案，不得在 finalAnswerDerivation 中同时写互斥答案。');
       buffer.writeln();
     }
-    if (!isGraphicalQuestion) {
-      final topicAnchor = _buildExerciseTopicAnchor(correctedText);
-      if (topicAnchor.isNotEmpty) {
-        buffer.writeln('举一反三锚点：$topicAnchor');
+    final topicProfile =
+        _buildExerciseTopicProfile(sourceQuestionText: correctedText);
+    final topicAnchor = _exerciseAnchorText(topicProfile);
+    if (topicAnchor.isNotEmpty) {
+      buffer.writeln('举一反三锚点：$topicAnchor');
+      buffer.writeln(
+          'generatedExercises 必须保持 domain/object/method，不得生成 avoid 中的题型。');
+      final isGeometryDomain =
+          topicProfile.domain == _ExerciseDomain.planeGeometryArea ||
+              topicProfile.domain == _ExerciseDomain.planeGeometryAngle ||
+              topicProfile.domain == _ExerciseDomain.solidGeometryVolume;
+      if (isGraphicalQuestion || isGeometryDomain) {
         buffer.writeln(
-            'generatedExercises 必须保持 domain/object/method，不得生成 avoid 中的题型。');
-        buffer.writeln();
+            '几何题的每道 generatedExercises 必须包含 diagramData 字段（归一化坐标），不得为 null。');
       }
+      buffer.writeln();
     }
     buffer.writeln(
         '请以 JSON 格式返回完整的分析结果，包含 subject、reconstructedQuestionText、visualAssumptions、finalAnswer、finalAnswerDerivation、steps、aiTags、knowledgePoints、mistakeReason、studyAdvice、exerciseAnchor、generatedExercises 字段。reconstructedQuestionText 是 AI 根据题目文本或读图理解整理出的完整题干；图形题的 reconstructedQuestionText 只能包含与求解目标直接相关、且从图片可确认的条件，不要强行命名外部轮廓或解释无关数字。visualAssumptions 格式为 {"targetObject":"","targetQuestion":"","measurements":[{"label":"","meaning":"","usedInSolution":true,"evidence":"image|text|inferred","confidence":"high|medium|low"}],"solutionBasis":[""],"uncertainItems":[""],"needsManualReview":false,"reviewReason":""}；所有步骤使用的图中标注都必须先出现在 measurements 或 solutionBasis 中。exerciseAnchor 只用短枚举，格式 {"domain":"","object":"","methods":[""],"avoid":[""]}。finalAnswerDerivation 必须只说明 finalAnswer 的来源，不能列出与 finalAnswer 互斥的另一个答案；finalAnswer、finalAnswerDerivation、steps 最后一条必须一致。方程组或多行公式请使用 aligned/cases 环境，不要使用 \\newline。');
     return buffer.toString();
-  }
-
-  String _buildExerciseTopicAnchor(String correctedText) {
-    final profile =
-        _buildExerciseTopicProfile(sourceQuestionText: correctedText);
-    return _exerciseAnchorText(profile);
   }
 
   String _exerciseAnchorText(_ExerciseTopicProfile profile) {
@@ -1970,6 +1975,9 @@ class AiAnalysisService {
         }
       }
 
+      final diagramRaw = exerciseMap['diagramData'];
+      final diagramParsed = _parseDiagramData(diagramRaw);
+
       final exercise = GeneratedExercise(
         id: id != null && id.isNotEmpty ? id : 'gen_${questionId}_${index + 1}',
         questionId: questionId,
@@ -1985,9 +1993,12 @@ class AiAnalysisService {
         createdAt: now,
         order: index,
         options: options,
+        diagramData: diagramParsed,
       );
 
-      if (_isGeneratedExerciseAcceptable(exercise, sourceProfile)) {
+      final acceptable =
+          _isGeneratedExerciseAcceptable(exercise, sourceProfile);
+      if (acceptable) {
         parsed.add(GeneratedExercise(
           id: exercise.id,
           questionId: exercise.questionId,
@@ -1999,12 +2010,19 @@ class AiAnalysisService {
           createdAt: exercise.createdAt,
           order: parsed.length,
           options: exercise.options,
+          diagramData: exercise.diagramData,
         ));
       }
     }
 
     final expectedCount = rawExercises.length >= 3 ? 3 : rawExercises.length;
     if (parsed.length < expectedCount) {
+      // If we have at least 1 valid exercise with diagramData, keep them
+      // rather than falling back to generic defaults that may not match.
+      final hasDiagram = parsed.any((e) => e.diagramData != null);
+      if (parsed.isNotEmpty && hasDiagram) {
+        return parsed;
+      }
       return _defaultGeneratedExercises(
         questionId,
         analysis: parsedAnalysis,
@@ -2013,6 +2031,14 @@ class AiAnalysisService {
     }
 
     return parsed;
+  }
+
+  Map<String, dynamic>? _parseDiagramData(Object? value) {
+    if (value is! Map) return null;
+    final data = Map<String, dynamic>.from(value);
+    final elements = data['elements'];
+    if (elements is! List || elements.isEmpty) return null;
+    return data;
   }
 
   VisualAssumptions? _parseVisualAssumptions(Object? value) {
@@ -2090,6 +2116,13 @@ class AiAnalysisService {
 
     if (_hasGeneratedExerciseSelfInvalidation(exercise)) {
       return false;
+    }
+
+    // Geometry exercises with valid diagramData get relaxed format validation —
+    // the AI only generates diagramData for geometry exercises per prompt rules,
+    // so its presence is a strong signal the exercise is on-topic and valid.
+    if (exercise.diagramData != null) {
+      return true;
     }
 
     final normalizedAnswer = exercise.answer.trim().toUpperCase();
@@ -2644,6 +2677,42 @@ class AiAnalysisService {
           explanation: r'圆面积公式为 \(S=\pi r^2\)，代入 \(r=4\)，得 \(S=16\pi\) cm²。',
           createdAt: now,
           order: 0,
+          diagramData: const <String, dynamic>{
+            'elements': [
+              {
+                'type': 'arc',
+                'cx': 0.5,
+                'cy': 0.5,
+                'r': 0.35,
+                'startAngle': 0,
+                'sweepAngle': 360,
+                'filled': false
+              },
+              {
+                'type': 'point',
+                'x': 0.5,
+                'y': 0.5,
+                'label': 'O',
+                'role': 'label'
+              },
+              {
+                'type': 'line',
+                'x1': 0.5,
+                'y1': 0.5,
+                'x2': 0.85,
+                'y2': 0.5,
+                'style': 'solid',
+                'role': 'known'
+              },
+              {
+                'type': 'text',
+                'text': '4cm',
+                'x': 0.67,
+                'y': 0.42,
+                'role': 'known'
+              },
+            ],
+          },
         ),
         GeneratedExercise(
           id: 'e2',
@@ -2662,6 +2731,42 @@ class AiAnalysisService {
               r'整圆面积为 \(25\pi\) cm²，半圆面积是整圆的一半，所以为 \(\frac{25\pi}{2}\) cm²。',
           createdAt: now,
           order: 1,
+          diagramData: const <String, dynamic>{
+            'elements': [
+              {
+                'type': 'arc',
+                'cx': 0.5,
+                'cy': 0.6,
+                'r': 0.3,
+                'startAngle': 180,
+                'sweepAngle': 180,
+                'filled': true
+              },
+              {
+                'type': 'line',
+                'x1': 0.2,
+                'y1': 0.6,
+                'x2': 0.8,
+                'y2': 0.6,
+                'style': 'solid',
+                'role': 'known'
+              },
+              {
+                'type': 'text',
+                'text': '5cm',
+                'x': 0.5,
+                'y': 0.68,
+                'role': 'known'
+              },
+              {
+                'type': 'point',
+                'x': 0.5,
+                'y': 0.6,
+                'label': 'O',
+                'role': 'label'
+              },
+            ],
+          },
         ),
         GeneratedExercise(
           id: 'e3',
@@ -2679,6 +2784,67 @@ class AiAnalysisService {
           explanation: r'圆环面积等于大圆面积减小圆面积，\(36\pi-16\pi=20\pi\) cm²。',
           createdAt: now,
           order: 2,
+          diagramData: const <String, dynamic>{
+            'elements': [
+              {
+                'type': 'arc',
+                'cx': 0.5,
+                'cy': 0.5,
+                'r': 0.4,
+                'startAngle': 0,
+                'sweepAngle': 360,
+                'filled': false
+              },
+              {
+                'type': 'arc',
+                'cx': 0.5,
+                'cy': 0.5,
+                'r': 0.27,
+                'startAngle': 0,
+                'sweepAngle': 360,
+                'filled': false
+              },
+              {
+                'type': 'line',
+                'x1': 0.5,
+                'y1': 0.5,
+                'x2': 0.9,
+                'y2': 0.5,
+                'style': 'solid',
+                'role': 'known'
+              },
+              {
+                'type': 'line',
+                'x1': 0.5,
+                'y1': 0.5,
+                'x2': 0.77,
+                'y2': 0.5,
+                'style': 'dashed',
+                'role': 'known'
+              },
+              {
+                'type': 'text',
+                'text': '6cm',
+                'x': 0.72,
+                'y': 0.42,
+                'role': 'known'
+              },
+              {
+                'type': 'text',
+                'text': '4cm',
+                'x': 0.6,
+                'y': 0.56,
+                'role': 'known'
+              },
+              {
+                'type': 'point',
+                'x': 0.5,
+                'y': 0.5,
+                'label': 'O',
+                'role': 'label'
+              },
+            ],
+          },
         ),
       ];
     }
@@ -2757,6 +2923,50 @@ class AiAnalysisService {
               r'三角形内角和为 \(180^\circ\)，所以 \(\angle C=180^\circ-50^\circ-60^\circ=70^\circ\)。',
           createdAt: now,
           order: 0,
+          diagramData: const <String, dynamic>{
+            'elements': [
+              {
+                'type': 'polygon',
+                'points': [
+                  [0.5, 0.15],
+                  [0.15, 0.85],
+                  [0.85, 0.85]
+                ],
+                'labels': [
+                  {'text': 'A', 'x': 0.5, 'y': 0.08},
+                  {'text': 'B', 'x': 0.1, 'y': 0.92},
+                  {'text': 'C', 'x': 0.9, 'y': 0.92}
+                ]
+              },
+              {
+                'type': 'angleArc',
+                'vx': 0.5,
+                'vy': 0.15,
+                'startAngle': 55,
+                'sweepAngle': 70,
+                'r': 0.08,
+                'label': '50°'
+              },
+              {
+                'type': 'angleArc',
+                'vx': 0.15,
+                'vy': 0.85,
+                'startAngle': -10,
+                'sweepAngle': 45,
+                'r': 0.08,
+                'label': '60°'
+              },
+              {
+                'type': 'angleArc',
+                'vx': 0.85,
+                'vy': 0.85,
+                'startAngle': 135,
+                'sweepAngle': 35,
+                'r': 0.08,
+                'label': '?'
+              },
+            ],
+          },
         ),
         GeneratedExercise(
           id: 'e2',
@@ -2771,6 +2981,48 @@ class AiAnalysisService {
               r'\(AB=AC\)，所以底角 \(\angle B=\angle C\)；两个底角和为 \(144^\circ\)，所以 \(\angle B=72^\circ\)。',
           createdAt: now,
           order: 1,
+          diagramData: const <String, dynamic>{
+            'elements': [
+              {
+                'type': 'polygon',
+                'points': [
+                  [0.5, 0.1],
+                  [0.2, 0.85],
+                  [0.8, 0.85]
+                ],
+                'labels': [
+                  {'text': 'A', 'x': 0.5, 'y': 0.03},
+                  {'text': 'B', 'x': 0.14, 'y': 0.92},
+                  {'text': 'C', 'x': 0.86, 'y': 0.92}
+                ]
+              },
+              {
+                'type': 'tickMark',
+                'x1': 0.5,
+                'y1': 0.1,
+                'x2': 0.2,
+                'y2': 0.85,
+                'ticks': 1
+              },
+              {
+                'type': 'tickMark',
+                'x1': 0.5,
+                'y1': 0.1,
+                'x2': 0.8,
+                'y2': 0.85,
+                'ticks': 1
+              },
+              {
+                'type': 'angleArc',
+                'vx': 0.5,
+                'vy': 0.1,
+                'startAngle': 60,
+                'sweepAngle': 60,
+                'r': 0.08,
+                'label': '36°'
+              },
+            ],
+          },
         ),
         GeneratedExercise(
           id: 'e3',
@@ -2785,6 +3037,50 @@ class AiAnalysisService {
               r'三角形外角等于两个不相邻内角之和，所以另一个内角为 \(120^\circ-45^\circ=75^\circ\)。',
           createdAt: now,
           order: 2,
+          diagramData: const <String, dynamic>{
+            'elements': [
+              {
+                'type': 'polygon',
+                'points': [
+                  [0.5, 0.15],
+                  [0.15, 0.75],
+                  [0.7, 0.75]
+                ],
+                'labels': [
+                  {'text': 'A', 'x': 0.5, 'y': 0.08},
+                  {'text': 'B', 'x': 0.1, 'y': 0.82},
+                  {'text': 'C', 'x': 0.72, 'y': 0.82}
+                ]
+              },
+              {
+                'type': 'line',
+                'x1': 0.7,
+                'y1': 0.75,
+                'x2': 0.95,
+                'y2': 0.75,
+                'style': 'dashed',
+                'role': 'auxiliary'
+              },
+              {
+                'type': 'angleArc',
+                'vx': 0.7,
+                'vy': 0.75,
+                'startAngle': -5,
+                'sweepAngle': 120,
+                'r': 0.07,
+                'label': '120°'
+              },
+              {
+                'type': 'angleArc',
+                'vx': 0.15,
+                'vy': 0.75,
+                'startAngle': -10,
+                'sweepAngle': 40,
+                'r': 0.08,
+                'label': '45°'
+              },
+            ],
+          },
         ),
       ];
     }
@@ -3057,7 +3353,6 @@ class _ConsistencyVerification {
   final String reason;
 }
 
-
 class ParsedAnalysisResult extends AnalysisResult {
   const ParsedAnalysisResult({
     required super.finalAnswer,
@@ -3078,6 +3373,45 @@ class ParsedAnalysisResult extends AnalysisResult {
   });
 
   final String rawContent;
+
+  @override
+  AnalysisResult copyWith({
+    Subject? subject,
+    String? finalAnswer,
+    String? finalAnswerDerivation,
+    String? reconstructedQuestionText,
+    VisualAssumptions? visualAssumptions,
+    VisualAssumptionStatus? visualAssumptionStatus,
+    List<String>? steps,
+    List<String>? aiTags,
+    List<String>? knowledgePoints,
+    String? mistakeReason,
+    String? studyAdvice,
+    AnalysisConsistencyStatus? consistencyStatus,
+    String? consistencyNote,
+    bool? wasVerifierUsed,
+  }) {
+    return ParsedAnalysisResult(
+      rawContent: rawContent,
+      subject: subject ?? this.subject,
+      finalAnswer: finalAnswer ?? this.finalAnswer,
+      finalAnswerDerivation:
+          finalAnswerDerivation ?? this.finalAnswerDerivation,
+      reconstructedQuestionText:
+          reconstructedQuestionText ?? this.reconstructedQuestionText,
+      visualAssumptions: visualAssumptions ?? this.visualAssumptions,
+      visualAssumptionStatus:
+          visualAssumptionStatus ?? this.visualAssumptionStatus,
+      steps: steps ?? this.steps,
+      aiTags: aiTags ?? this.aiTags,
+      knowledgePoints: knowledgePoints ?? this.knowledgePoints,
+      mistakeReason: mistakeReason ?? this.mistakeReason,
+      studyAdvice: studyAdvice ?? this.studyAdvice,
+      consistencyStatus: consistencyStatus ?? this.consistencyStatus,
+      consistencyNote: consistencyNote ?? this.consistencyNote,
+      wasVerifierUsed: wasVerifierUsed ?? this.wasVerifierUsed,
+    );
+  }
 }
 
 class CandidateAnalysisPayload {

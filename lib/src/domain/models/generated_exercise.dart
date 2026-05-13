@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 enum ExerciseGenerationMode { practice, similar, followUp, mistakeFocused }
 
 class GeneratedExercise {
@@ -18,6 +20,7 @@ class GeneratedExercise {
     this.roundTotal,
     this.roundGroupId,
     this.sourceExerciseId,
+    this.diagramData,
   });
 
   factory GeneratedExercise.fromJson(Map<String, dynamic> json) {
@@ -50,7 +53,22 @@ class GeneratedExercise {
       roundTotal: json['roundTotal'] as int?,
       roundGroupId: json['roundGroupId'] as String?,
       sourceExerciseId: json['sourceExerciseId'] as String?,
+      diagramData: _parseDiagramDataField(json['diagramData']),
     );
+  }
+
+  static Map<String, dynamic>? _parseDiagramDataField(Object? value) {
+    if (value == null) return null;
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    if (value is String && value.isNotEmpty) {
+      try {
+        final decoded = const JsonDecoder().convert(value);
+        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+    }
+    return null;
   }
 
   Map<String, dynamic> toJson() {
@@ -71,6 +89,7 @@ class GeneratedExercise {
       'roundTotal': roundTotal,
       'roundGroupId': roundGroupId,
       'sourceExerciseId': sourceExerciseId,
+      'diagramData': diagramData,
     };
   }
 
@@ -90,6 +109,7 @@ class GeneratedExercise {
   final int? roundTotal;
   final String? roundGroupId;
   final String? sourceExerciseId;
+  final Map<String, dynamic>? diagramData;
 
   GeneratedExercise copyWith({
     String? id,
@@ -103,6 +123,7 @@ class GeneratedExercise {
     int? roundTotal,
     String? roundGroupId,
     String? sourceExerciseId,
+    Object? diagramData = _sentinel,
   }) {
     return GeneratedExercise(
       id: id ?? this.id,
@@ -124,6 +145,9 @@ class GeneratedExercise {
       roundTotal: roundTotal ?? this.roundTotal,
       roundGroupId: roundGroupId ?? this.roundGroupId,
       sourceExerciseId: sourceExerciseId ?? this.sourceExerciseId,
+      diagramData: identical(diagramData, _sentinel)
+          ? this.diagramData
+          : diagramData as Map<String, dynamic>?,
     );
   }
 }

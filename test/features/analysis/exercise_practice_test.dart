@@ -11,6 +11,7 @@ import 'package:smart_wrong_notebook/src/domain/models/question_record.dart';
 import 'package:smart_wrong_notebook/src/domain/models/question_split_result.dart';
 import 'package:smart_wrong_notebook/src/domain/models/subject.dart';
 import 'package:smart_wrong_notebook/src/features/analysis/presentation/exercise_practice_screen.dart';
+import 'package:smart_wrong_notebook/src/features/analysis/presentation/widgets/geometry_diagram_widget.dart';
 import 'package:smart_wrong_notebook/src/features/ocr/presentation/question_split_confirmation_screen.dart';
 
 QuestionRecord _makeQuestion({List<GeneratedExercise>? exercises}) {
@@ -280,6 +281,96 @@ void main() {
     final session = container.read(currentQuestionSplitSessionProvider);
     expect(session?.drafts.map((draft) => draft.selected).toList(),
         <bool>[false, true]);
+  });
+
+  testWidgets(
+      'refreshes practice exercises when diagramData appears for same question',
+      (tester) async {
+    final repo = InMemoryQuestionRepository();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        questionRepositoryProvider.overrideWithValue(repo),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final now = DateTime.now();
+    final withoutDiagram = GeneratedExercise(
+      id: 'e-1',
+      questionId: 'q-1',
+      generationMode: ExerciseGenerationMode.practice,
+      difficulty: '简单',
+      question: '求三角形面积',
+      options: const ['A. 6', 'B. 8', 'C. 10', 'D. 12'],
+      answer: 'A',
+      explanation: '面积公式',
+      createdAt: now,
+      order: 0,
+    );
+    final withDiagram = withoutDiagram.copyWith(
+      diagramData: const <String, dynamic>{
+        'elements': [
+          {
+            'type': 'polygon',
+            'points': [
+              [0.2, 0.8],
+              [0.8, 0.8],
+              [0.5, 0.2],
+            ],
+          },
+        ],
+      },
+    );
+
+    container.read(currentQuestionProvider.notifier).state =
+        _makeQuestion(exercises: <GeneratedExercise>[withoutDiagram]);
+    final router = _practiceRouter();
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GeometryDiagramWidget), findsNothing);
+
+    container.read(currentQuestionProvider.notifier).state =
+        _makeQuestion(exercises: <GeneratedExercise>[withDiagram]);
+    await tester.pump();
+
+    expect(find.byType(GeometryDiagramWidget), findsOneWidget);
+  });
+
+  testWidgets('renders diagramData with dynamic map elements from memory',
+      (tester) async {
+    final diagramData = <String, dynamic>{
+      'elements': <Object?>[
+        <Object?, Object?>{
+          'type': 'polygon',
+          'points': <Object?>[
+            <Object?>[0.2, 0.8],
+            <Object?>[0.8, 0.8],
+            <Object?>[0.5, 0.2],
+          ],
+        },
+        <Object?, Object?>{
+          'type': 'rightAngle',
+          'x': 0.2,
+          'y': 0.8,
+        },
+      ],
+      'auxiliaryLines': <Object?>[],
+    };
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: GeometryDiagramWidget(diagramData: diagramData),
+      ),
+    ));
+    await tester.pump();
+
+    expect(find.byType(CustomPaint), findsAtLeastNWidgets(1));
   });
 
   // testWidgets('shows answer after marking correct', (tester) async { ... });

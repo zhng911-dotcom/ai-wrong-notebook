@@ -1,151 +1,71 @@
-#2026-05-04 Park / 工作进度
+# 项目进展 / Park — 2026-05-13
 
-## Done
+## 当前版本状态
 
-###1. 举一反三题型漂移修复
-- 修复二次方程/平方根题被兜底成一元一次题的问题。
-- 增加主干题型锚点，举一反三生成、校验、兜底都复用同一个主干题型判断。
-- 增加函数求值、立体几何体积、方程组、三角形角度等强题型校验，避免被 `x^2`、`r^2` 等弱符号误判成平方根题。
-- 新增分式/比例关系题型锚点，修复 `\(\frac{a}{b}=2\)` + 和差条件漂移到平方根/方程组的问题。
-- 修复三角形兜底练习角度 LaTeX：改成 `\(\angle A=50^\circ\)`这种 inline math，未修改 LaTeX 渲染引擎。
+- 当前 APK：`build/app/outputs/flutter-apk/ai-wrong-notebook-v62-20260513-0325.apk`
+- 当前版本号仍为 v62：本次属于 bug 修复与验证包，小改动只更新时间戳，不递增版本号。
+- APK 已按项目规则留在 `build/app/outputs/flutter-apk/`，未复制到 Desktop。
+- 本地仍有多组未提交改动；提交前需要显式确认文件清单，不能 `git add .`。
 
-###2. 多题保存交互完成
-- 多题确认页已简化为：勾选题目 + 全选 / 清空 + `保存已勾选题目 (N)`。
--0题勾选时保存按钮禁用，并显示“请至少勾选一道题后再保存”。
-- 保存后保留子题独立数据：解析、AI 标签、知识点、举一反三、父题/根题/拆题顺序。
+## 今日完成
 
-###3. 多轮举一反三 + 保存分流完成
-- 举一反三完成一轮后展示完成页，不再直接跳走。
-- 完成页动作按来源区分：
- - AI解析未保存题：`保存这道题`
- - 错题本已保存题：`返回错题详情`
- - 两者都支持 `继续练习`
-- `继续练习` 会开启下一轮，并保留上一轮答题结果。
-- 已保存题从错题本练习时，轮次结果写回题目记录。
-- AI解析未保存题练习时，轮次结果先留在当前分析会话；保存时再进入多题保存确认页。
-- 多题场景下，`保存这道题` 默认只勾选当前子题，用户仍可全选或调整勾选。
-- `GeneratedExercise` 增加轻量轮次字段：`roundIndex`、`roundTotal`、`roundGroupId`、`sourceExerciseId`。
-- Drift 数据库升级到 schemaVersion4，新增练习轮次字段迁移。
+### 1. 继续排查几何练习题 `diagramData` 首次不显示问题
 
-###4. 多题解析串题修复
-- 修复多题保存时子题缺少独立 `CandidateAnalysisSnapshot` 会继承父题/第1题 `analysisResult`、AI 标签、知识点的问题。
-- 修复多题 AI解析结果页显示兜底：多题模式下当前子题没有独立解析时显示“暂无解析结果”，不再展示父题/第1题答案和练习。
-- 增加回归测试覆盖：保存链路不串题、解析页缺失快照不串题、六题样例第4/6题独立解析不串题。
-- 已按要求未修改 LaTeX 渲染引擎文件：`math_content_view.dart`、`katex_math_view.dart`、`assets/katex/*`。
+用户真机验证确认：
 
-###5. 多题部分解析失败补丁
-- 针对真机 JSON里第2/4/5/6题出现 `analysisResult: null`、空标签、空知识点的问题，补齐 AI 多题分析失败处理。
-- `analyzeSplitCandidates()` 从无限并发 `Future.wait` 改为并发上限2。
-- 每道子题解析失败后自动重试1 次。
-- 如果仍有任意子题失败，直接抛出明确错误：第几题解析失败，请重试；不会进入可保存的半成品结果态。
-- 不再用父题/第1题兜底，也不允许空解析子题被保存进题库。
-- 新增测试模拟第2题解析失败，确认不会进入结果页、不会产生 partial `candidateAnalyses`、不会写入空解析。
+- 拍照 → AI 解析 → 解析结果页 → 立即点击「开始练习」：举一反三几何题无配图。
+- 首次保存到错题本 → 直接进入错题详情 → 立即练习：举一反三几何题无配图。
+- 保存后重新从「错题本 → 错题详情 → 开始练习」进入：同一题有配图。
 
-###6. 下一阶段 AI 链路方案已写入记忆
-- 已新增 memory：`ai_capture_provider_next_phase.md`。
-- `MEMORY.md` 已加索引：`AI错题本下一阶段 AI 链路`。
--记忆内容覆盖：拍照/框选/拆题/分析提效、并发上限、失败重试、provider 模板、单 active provider、多 provider 后续演进。
--该方案暂不硬塞进当前 v60，回来后再决定是否做低感知重构或完整 P1 改造。
+关键结论：持久化 JSON 中 `savedExercises[].diagramData` 是存在的，问题不在生成或 SharedPreferences 序列化丢字段；差异在“即时内存对象”和“重新从 JSON 反序列化对象”的结构/解析路径。
 
-###7. APK 打包
-- 最新补丁 APK：
- - `build/app/outputs/flutter-apk/ai-wrong-notebook-v60-20260504-1610.apk`
-- 上一个 APK：
- - `build/app/outputs/flutter-apk/ai-wrong-notebook-v60-20260504-1530.apk`
-- 不再建议验证旧 APK：
- - `build/app/outputs/flutter-apk/ai-wrong-notebook-v60-20260504-1443.apk`
-- 小改动未递增小版本号，只更新时间戳。
+### 2. 第一层修复：练习页缓存刷新
 
-## Verification
+文件：`lib/src/features/analysis/presentation/exercise_practice_screen.dart`
 
-- `dart format lib/src/app/providers.dart lib/src/features/analysis/presentation/analysis_result_screen.dart test/app/providers_test.dart test/features/analysis/analysis_result_screen_test.dart`：通过，已格式化。
-- `dart format lib/src/data/remote/ai/ai_analysis_service.dart test/features/analysis/analysis_loading_screen_test.dart`：通过，已格式化。
-- `flutter pub run build_runner build --delete-conflicting-outputs`：通过，已重新生成 Drift代码。
-- `flutter test test/data/remote/ai_analysis_service_test.dart`：通过，22/22。
-- `flutter test test/features/analysis/exercise_practice_test.dart`：通过，4/4。
-- `flutter test test/features/ocr/question_split_confirmation_screen_test.dart test/app/providers_test.dart`：通过，12/12。
-- `flutter test test/features/analysis/exercise_practice_test.dart test/features/ocr/question_split_confirmation_screen_test.dart test/app/providers_test.dart`：通过，16/16。
-- `flutter test test/features/analysis/analysis_loading_screen_test.dart`：通过，11/11。
-- `flutter test test/app/providers_test.dart test/features/analysis/analysis_loading_screen_test.dart test/features/analysis/analysis_result_screen_test.dart test/features/ocr/question_split_confirmation_screen_test.dart test/features/analysis/exercise_practice_test.dart`：通过，33/33。
-- `flutter analyze --no-fatal-infos`：完成，无 warning/error；仅剩既有 info级 lint，集中在 AI prompt 字符串多余转义、LaTeX 测试 const 建议等。
-- `flutter build apk --release`：通过，生成 release APK，并复制为 `ai-wrong-notebook-v60-20260504-1610.apk`。
-- 构建/测试过程中仍有已知 pub.dev advisory decode 噪声：`advisoriesUpdated must be a String`，不影响产物生成。
+- 原逻辑只按 `questionId` 判断是否复用 `_exercises`。
+- 已改为同时比较：
+  - `questionId`
+  - `practiceContext.candidateId`
+  - 练习数据源版本（包含 `diagramData`）
+- 避免同一题数据补全后仍复用旧 `_exercises`。
+- 完成练习/继续练习时同步内部 source version，避免完成页被误重置。
 
-## Important Root Cause Notes
+### 3. 第二层修复：几何图组件兼容即时内存 Map
 
--旧保存链路里，子题缺少独立 `CandidateAnalysisSnapshot` 时会兜底使用父题 `analysisResult`，而父题在多题场景通常是第1题解析。
--这个兜底掩盖了“子题缺少 snapshot / 部分分析失败”的真实问题，表现为第2/4/5/6题拿到第1题解析。
-- 切掉父题兜底后，串题消失，但缺少 snapshot 的子题会暴露为空解析。
--现在的补丁做法是：不串题、不空存；如果任意子题解析失败，明确失败并阻止进入保存态。
-- 用户反馈“之前很少出现多题部分失败”，所以后续需要判断是真实 API 偶发、并发限流，还是当前 prompt/解析格式导致某些题解析失败。
+文件：`lib/src/features/analysis/presentation/widgets/geometry_diagram_widget.dart`
 
-## Blockers / Watch Items
+- `GeometryDiagramWidget` 原解析器对 `elements` / `auxiliaryLines` 子元素使用严格 `Map<String, dynamic>` cast。
+- 即时 AI 内存对象里的嵌套 map 可能是 `Map<dynamic, dynamic>`，而重新进入错题本后 JSON 反序列化会变成更稳定的字符串 key map。
+- 已新增 `_asStringMap`，解析 `elements` / `auxiliaryLines` 时兼容 `Map` 并转换为 `Map<String, dynamic>`。
+- 这次没有改 `math_content_view.dart`、`katex_math_view.dart`、`assets/katex/`，也没有动 LaTeX 正则或 LaTeX 渲染引擎。
 
--需要用最新 APK 真机验证：
- - 多题样例6题解析是否能全部成功。
- - 如果某一题失败，是否明确提示第几题失败，而不是保存空解析或串题。
- - 多题拆分保存后，第2/4/5/6题的 `analysisResult`、AI 标签、知识点不再继承第1题。
- - 多题保存默认勾选当前子题是否符合预期。
- - 举一反三完成页：AI解析题显示 `保存这道题`，错题本已保存题显示 `返回错题详情`。
- - 已保存题继续练习后轮次是否保留。
- - 分式/比例、三角形角度、函数、立体几何、方程组没有回归。
-- PDF 导出优先级 P2，暂不进入 v60；后续需要先明确范围、中文字体、分页、题目卷/答案卷、分享/打印入口。
-- 拍照框选/AI provider 两个下一阶段需求已定方案并写入记忆，但不塞进当前 v60 APK。
-- 用户正在思考是否做 AI 分析链路低感知重构：保持当前体验，但底层拆清楚 splitResult、candidateAnalyses、失败重试、保存资格。
+### 4. 测试与验证
 
-## Current Git Status Snapshot
+- `flutter test test/features/analysis/exercise_practice_test.dart` → `EXIT_CODE:0`
+  - 覆盖同一题 `diagramData` 从无到有时练习页刷新。
+  - 覆盖 `GeometryDiagramWidget` 解析即时内存 `Map<dynamic, dynamic>` 子元素。
+- `flutter analyze --no-fatal-infos lib/src/features/analysis/presentation/widgets/geometry_diagram_widget.dart test/features/analysis/exercise_practice_test.dart lib/src/features/analysis/presentation/exercise_practice_screen.dart` → `EXIT_CODE:0`
+- LaTeX 渲染相关文件 diff 检查 → `EXIT_CODE:0`，无输出。
+- `flutter build apk --release` → `EXIT_CODE:0`
+- 最新 APK：`build/app/outputs/flutter-apk/ai-wrong-notebook-v62-20260513-0325.apk`
 
-当前分支：`main`
+## Blockers / 风险点
 
-已修改文件：
-- `lib/src/app/providers.dart`
-- `lib/src/data/local/app_database.dart`
-- `lib/src/data/local/app_database.g.dart`
-- `lib/src/data/local/tables/generated_exercises.dart`
-- `lib/src/data/remote/ai/ai_analysis_service.dart`
-- `lib/src/data/repositories/drift_question_repository.dart`
-- `lib/src/domain/models/generated_exercise.dart`
-- `lib/src/features/analysis/presentation/analysis_loading_screen.dart`
-- `lib/src/features/analysis/presentation/analysis_result_screen.dart`
-- `lib/src/features/analysis/presentation/exercise_practice_screen.dart`
-- `lib/src/features/ocr/presentation/question_split_confirmation_screen.dart`
-- `progress-current.md`
-- `test/app/providers_test.dart`
-- `test/data/remote/ai_analysis_service_test.dart`
-- `test/features/analysis/analysis_loading_screen_test.dart`
-- `test/features/analysis/analysis_result_screen_test.dart`
-- `test/features/analysis/exercise_practice_test.dart`
-- `test/features/ocr/question_split_confirmation_screen_test.dart`
-
-未跟踪文件：
-- `docs/ai-analysis-layout-proposal.html`
-- `docs/current-layout-home-review-proposal.html`
-- `docs/home-review-ux-proposal.html`
-- `docs/icon-style-comparison.html`
-- `docs/jilu.txt`
-- `docs/layout-preview.html`
-- `docs/review-flow-stats-proposal.html`
-- `docs/review-top-stats-proposal.html`
-- `docs/theme-palette-analysis-result-preview.html`
-- `progress-2026-04-29.md`
+1. 本地没有 Android 真机或模拟器，无法由我直接跑完整 UI 手动流程；需要用户用 `0325` APK 真机复测两个即时入口。
+2. 真机旧包 `0242` 已证明第一层缓存修复不够；`0325` 包加入了几何图内存 Map 兼容修复，仍待真机确认。
+3. `ai_analysis_service.dart` 里 AI prompt 文本包含 LaTeX 反斜杠，完整 analyzer 会报 `unnecessary_string_escapes` info；本次按用户要求没有清理这些 prompt 文本，更没有触碰 LaTeX 渲染引擎。
+4. 当前 git working tree 有较多历史/并行改动与未跟踪文件，提交必须显式确认文件清单，避免误提交无关草稿。
 
 ## Next First Step
 
-回来后先安装并验证：
+1. 用户安装并测试 `ai-wrong-notebook-v62-20260513-0325.apk`：
+   - AI 解析后立即「开始练习」是否有图。
+   - 首次保存到错题详情后立即练习是否有图。
+   - 重新从错题本进入是否仍正常有图。
+2. 如果 `0325` 仍没图，下一步加最小 debug：在练习页输出当前 exercise 的 `diagramData.runtimeType`、`elements.runtimeType`、首个 element runtimeType，以及 `GeometryDiagramWidget` parse result；用真机 logcat / flutter logs 看即时入口和重进入口差异。
+3. 完成 park 本地 WIP 提交：先确认精确文件清单，再 `git add <explicit files>`，commit message 固定 `wip: end of day state`。
 
-`build/app/outputs/flutter-apk/ai-wrong-notebook-v60-20260504-1610.apk`
+## Tomorrow first action
 
-真机重点验证链路：
-1. 多题6题样例是否全部解析成功。
-2. 如果有子题解析失败，是否明确报错并阻止保存半成品。
-3. 多题拆分保存后，第2/4/5/6题解析、AI 标签、知识点不再继承第1题。
-4. 多轮举一反三继续练习是否保留历史轮次。
-5. 已保存题练习完成是否显示 `返回错题详情`。
-6. AI解析未保存题练习完成是否显示 `保存这道题`。
-7. 分式/比例、方程组、圆锥体积、等腰三角形角度题型不回归。
-
-## Resume Prompt
-
-下次继续时可以直接说：
-
-“继续 AI 错题本 v60 真机验证收尾。先读 `progress-current.md`，重点验证最新 APK `build/app/outputs/flutter-apk/ai-wrong-notebook-v60-20260504-1610.apk`。检查多题6题样例是否全部解析成功；如果失败，是否明确提示第几题失败且不保存半成品。不要动 LaTeX 渲染引擎。验证通过后再准备提交/发布；如果仍不稳，再讨论低感知重构 AI 分析链路。”
+- 先看用户真机复测 `0325` APK 结果；如果通过，再收尾提交；如果失败，按上述 debug 点继续定位即时内存对象和图形 parser 的差异。

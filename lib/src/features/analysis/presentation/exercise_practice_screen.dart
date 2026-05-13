@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:smart_wrong_notebook/src/app/providers.dart';
 import 'package:smart_wrong_notebook/src/domain/models/generated_exercise.dart';
 import 'package:smart_wrong_notebook/src/domain/models/question_record.dart';
+import 'package:smart_wrong_notebook/src/features/analysis/presentation/widgets/geometry_diagram_widget.dart';
 import 'package:smart_wrong_notebook/src/shared/widgets/math_content_view.dart';
 
 class ExercisePracticeScreen extends ConsumerStatefulWidget {
@@ -19,8 +20,17 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
   int _index = 0;
   List<GeneratedExercise>? _exercises;
   String? _questionId;
+  String? _practiceCandidateId;
+  String? _exerciseSourceVersion;
   bool _isJudging = false;
   bool _showCompletion = false;
+  final TextEditingController _freeInputController = TextEditingController();
+
+  @override
+  void dispose() {
+    _freeInputController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,11 +49,18 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
       );
     }
 
-    if (current.id != _questionId || _exercises == null) {
+    final sourceExercises = _practiceExercises(current, practiceContext);
+    final sourceVersion = _exerciseSourceVersionOf(sourceExercises);
+    if (current.id != _questionId ||
+        practiceContext?.candidateId != _practiceCandidateId ||
+        sourceVersion != _exerciseSourceVersion ||
+        _exercises == null) {
       _index = 0;
       _questionId = current.id;
+      _practiceCandidateId = practiceContext?.candidateId;
+      _exerciseSourceVersion = sourceVersion;
       _exercises = List.from(_nextPracticeRound(
-        _practiceExercises(current, practiceContext),
+        sourceExercises,
         questionId: current.id,
       ));
       _showCompletion = false;
@@ -170,6 +187,14 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
+                if (exercise.diagramData != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: GeometryDiagramWidget(
+                      diagramData: exercise.diagramData!,
+                      showAuxiliaryButton: answered,
+                    ),
+                  ),
                 if (exercise.options != null && exercise.options!.isNotEmpty)
                   ...exercise.options!.asMap().entries.map((entry) {
                     final parsedOption = _parseOption(entry.value);
@@ -272,6 +297,27 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
                       ),
                     );
                   })
+                else if (!answered)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: TextField(
+                      controller: _freeInputController,
+                      decoration: InputDecoration(
+                        hintText: '输入你的答案',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _exercises![_index] = _exercises![_index]
+                              .copyWith(userAnswer: value.trim());
+                        });
+                      },
+                    ),
+                  )
                 else
                   const SizedBox.shrink(),
                 if (answered) ...<Widget>[
@@ -359,6 +405,7 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
                         if (isLast) {
                           _finishRound(current, exercises);
                         } else {
+                          _freeInputController.clear();
                           setState(() => _index++);
                         }
                       },
@@ -372,7 +419,8 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
                   : _isJudging
                       ? const Center(child: CircularProgressIndicator())
                       : FilledButton.icon(
-                          onPressed: exercise.userAnswer != null
+                          onPressed: exercise.userAnswer != null &&
+                                  exercise.userAnswer!.isNotEmpty
                               ? () => _submitAnswer(exercises, _index)
                               : null,
                           style: FilledButton.styleFrom(
@@ -506,6 +554,24 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
       }
     }
     return current.savedExercises;
+  }
+
+  String _exerciseSourceVersionOf(List<GeneratedExercise> exercises) {
+    return exercises.map(_exerciseVersion).join('|');
+  }
+
+  String _exerciseVersion(GeneratedExercise exercise) {
+    return Object.hashAll(<Object?>[
+      exercise.id,
+      exercise.questionId,
+      exercise.question,
+      exercise.answer,
+      exercise.options == null ? null : Object.hashAll(exercise.options!),
+      exercise.isCorrect,
+      exercise.userAnswer,
+      exercise.roundIndex,
+      exercise.diagramData?.toString(),
+    ]).toString();
   }
 
   int _currentRoundIndex(List<GeneratedExercise> exercises) {
@@ -688,10 +754,14 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
         : question.copyWith(savedExercises: updatedExercises);
 
     if (practiceContext?.source == PracticeContextSource.analysis) {
+      _exerciseSourceVersion = _exerciseSourceVersionOf(
+          _practiceExercises(updated, practiceContext));
       ref.read(currentQuestionProvider.notifier).state = updated;
     } else {
       await ref.read(questionRepositoryProvider).update(updated);
       invalidateQuestionList(ref);
+      _exerciseSourceVersion = _exerciseSourceVersionOf(
+          _practiceExercises(updated, practiceContext));
       ref.read(currentQuestionProvider.notifier).state = updated;
     }
 
@@ -710,10 +780,14 @@ class _ExercisePracticeState extends ConsumerState<ExercisePracticeScreen> {
         : question.copyWith(savedExercises: updatedExercises);
 
     if (practiceContext?.source == PracticeContextSource.analysis) {
+      _exerciseSourceVersion = _exerciseSourceVersionOf(
+          _practiceExercises(updated, practiceContext));
       ref.read(currentQuestionProvider.notifier).state = updated;
     } else {
       await ref.read(questionRepositoryProvider).update(updated);
       invalidateQuestionList(ref);
+      _exerciseSourceVersion = _exerciseSourceVersionOf(
+          _practiceExercises(updated, practiceContext));
       ref.read(currentQuestionProvider.notifier).state = updated;
     }
 

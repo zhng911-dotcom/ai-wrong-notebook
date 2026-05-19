@@ -1593,6 +1593,87 @@ void main() {
     expect(exercises[1].question, contains('求该半圆的面积'));
   });
 
+  test(
+      'service falls back to pythagorean semicircle exercises for framed semicircle source',
+      () {
+    final service = AiAnalysisService.fake();
+    const raw = r'''
+{
+  "subject": "数学",
+  "finalAnswer": "\(\frac{29\pi}{2}\)",
+  "steps": ["左斜边是半圆直径", "由勾股定理求出直径平方", "半圆面积为 \(\frac{29\pi}{2}\)"],
+  "aiTags": ["半圆面积", "勾股定理"],
+  "knowledgePoints": ["半圆面积", "勾股定理"],
+  "mistakeReason": "直径读错",
+  "studyAdvice": "先由水平差和高求直径",
+  "generatedExercises": []
+}
+''';
+
+    final exercises = service.extractGeneratedExercisesFromContent(
+      raw,
+      questionId: 'q-framed-semicircle-fallback',
+      sourceQuestionText: '如图，外框上边长为 3，下边长为 7，右边高为 10，左侧斜边为半圆直径，求该半圆的面积。',
+    );
+
+    expect(exercises.length, 3);
+    expect(exercises.first.question, contains('上边长'));
+    expect(exercises.first.question, contains('左侧斜边为半圆直径'));
+    expect(exercises.map((exercise) => exercise.explanation).join(' '),
+        contains('勾股'));
+    expect(exercises.map((exercise) => exercise.question).join(' '),
+        isNot(contains('半径为 4')));
+    expect(exercises.every((exercise) => exercise.diagramData != null), isTrue);
+    final diagramTexts = (exercises.first.diagramData!['elements'] as List)
+        .whereType<Map>()
+        .where((element) => element['type'] == 'text')
+        .map((element) => element['text'])
+        .join(' ');
+    expect(diagramTexts, contains('求半圆面积'));
+    expect(diagramTexts, isNot(contains('求此区域')));
+  });
+
+  test('service parameterizes framed semicircle fallback from source numbers',
+      () {
+    final service = AiAnalysisService.fake();
+    const raw = r'''
+{
+  "subject": "数学",
+  "finalAnswer": "\(\frac{25\pi}{2}\)",
+  "steps": ["左侧斜边是半圆直径", "由水平差和高求直径", "求半圆面积"],
+  "aiTags": ["半圆面积", "勾股定理"],
+  "knowledgePoints": ["半圆面积", "勾股定理"],
+  "mistakeReason": "直径读错",
+  "studyAdvice": "先确认上下边和高",
+  "generatedExercises": []
+}
+''';
+
+    final exercises = service.extractGeneratedExercisesFromContent(
+      raw,
+      questionId: 'q-param-framed-semicircle',
+      sourceQuestionText: '如图，外框上边长为 6，下边长为 14，右边高为 15，左侧斜边为半圆直径，求该半圆的面积。',
+    );
+
+    expect(exercises.length, 3);
+    expect(exercises[1].question, contains('上边长为 6'));
+    expect(exercises[1].question, contains('下边长为 14'));
+    expect(exercises[1].question, contains('右边高为 15'));
+    expect(exercises[1].options?[1], contains('289π/8'));
+    expect(exercises[1].answer, 'B');
+    expect(exercises[1].explanation, contains('水平差为 8'));
+    expect(exercises[1].explanation, contains('直径平方为 289'));
+    final diagramTexts = (exercises[1].diagramData!['elements'] as List)
+        .whereType<Map>()
+        .where((element) => element['type'] == 'text')
+        .map((element) => element['text'])
+        .join(' ');
+    expect(diagramTexts, contains('6'));
+    expect(diagramTexts, contains('14'));
+    expect(diagramTexts, contains('15'));
+    expect(diagramTexts, contains('求半圆面积'));
+  });
+
   test('service rejects solid geometry drift for composite semicircle area',
       () {
     final service = AiAnalysisService.fake();
@@ -1697,6 +1778,39 @@ void main() {
         isNot(contains('bad-correct-option')));
     expect(exercises[1].answer, 'B');
     expect(exercises[1].question, contains('上边长为 3'));
+  });
+
+  test(
+      'service rejects generated exercise when answer option value conflicts with explanation conclusion',
+      () {
+    final service = AiAnalysisService.fake();
+    const raw = r'''
+{
+  "subject": "数学",
+  "finalAnswer": "50-\frac{29\pi}{2}",
+  "steps": ["外框面积为 50。", "半圆面积为 29\pi/2。"],
+  "aiTags": ["半圆面积", "组合图形"],
+  "knowledgePoints": ["整体减部分"],
+  "mistakeReason": "目标区域读错",
+  "studyAdvice": "先确认目标区域",
+  "generatedExercises": [
+    {"id": "bad-value-conflict", "difficulty": "同级", "question": "如图，上边长为 5，下边长为 11，右边高为 8，半圆以左侧斜边为直径。求外框内、半圆外的区域面积。", "options": ["A. 64-25π", "B. 64-50π", "C. 128-25π", "D. 64-25π/2"], "answer": "A", "explanation": "外框面积为 64，半圆面积为 25π/2，因此剩余面积为 64-25π/2。", "diagramData": {"elements": [{"type": "line", "x1": 0.1, "y1": 0.2, "x2": 0.8, "y2": 0.2}]}}
+  ]
+}
+''';
+
+    final exercises = service.extractGeneratedExercisesFromContent(
+      raw,
+      questionId: 'q-option-value-conflict',
+      sourceQuestionText:
+          '图中外框由上水平边、右竖边、下水平边和左斜边围成，上水平边长为 3，下水平边长为 7，右竖边高为 10；左斜边作为半圆的直径，半圆位于外框内。求外框内、半圆外的括号状区域面积。',
+    );
+
+    expect(exercises.length, 3);
+    expect(exercises.map((exercise) => exercise.id),
+        isNot(contains('bad-value-conflict')));
+    expect(exercises[1].answer, 'B');
+    expect(exercises[1].options?[1], contains(r'50-\frac{29\pi}{2}'));
   });
 
   test('service rejects semicircle-only target for composite area source', () {

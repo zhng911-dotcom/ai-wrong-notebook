@@ -57,6 +57,21 @@ class _ExteriorAngleSpec {
   final String basePoint;
 }
 
+class _FramedSemicircleSpec {
+  const _FramedSemicircleSpec({
+    required this.top,
+    required this.bottom,
+    required this.height,
+  });
+
+  final int top;
+  final int bottom;
+  final int height;
+
+  int get horizontalDiff => (bottom - top).abs();
+  int get diameterSquared => horizontalDiff * horizontalDiff + height * height;
+}
+
 enum _ExerciseMethod {
   linearSolve,
   squareRoot,
@@ -2740,7 +2755,73 @@ class AiAnalysisService {
       final stated = match.group(1);
       if (stated != null && stated != answer) return true;
     }
-    return false;
+
+    final options = exercise.options;
+    if (options == null || options.length != 4) return false;
+    final answerIndex = answer.codeUnitAt(0) - 'A'.codeUnitAt(0);
+    if (answerIndex < 0 || answerIndex >= options.length) return false;
+
+    final selectedTokens = _mathConclusionTokens(options[answerIndex]);
+    final explanationTokens = _mathConclusionTokens(exercise.explanation);
+    if (selectedTokens.isEmpty || explanationTokens.isEmpty) return false;
+    if (selectedTokens.intersection(explanationTokens).isNotEmpty) {
+      return false;
+    }
+
+    final distractorTokens = <String>{};
+    for (var i = 0; i < options.length; i++) {
+      if (i == answerIndex) continue;
+      distractorTokens.addAll(_mathConclusionTokens(options[i]));
+    }
+    return explanationTokens.intersection(distractorTokens).isNotEmpty;
+  }
+
+  Set<String> _mathConclusionTokens(String text) {
+    final normalized = text
+        .replaceAll('π', r'\pi')
+        .replaceAll('，', ' ')
+        .replaceAll('。', ' ')
+        .replaceAll('；', ' ')
+        .replaceAll(';', ' ')
+        .replaceAll(RegExp(r'\s+'), '')
+        .replaceFirst(RegExp(r'^[A-Da-d][\.、．:]'), '')
+        .toLowerCase();
+    final tokens = <String>{};
+
+    for (final match in RegExp(
+      r'\d+(?:\.\d+)?[-+]\d+(?:\.\d+)?(?:\\pi|pi)(?:/\d+(?:\.\d+)?)?',
+    ).allMatches(normalized)) {
+      final token = match.group(0);
+      if (token != null) tokens.add(_normalizeMathToken(token));
+    }
+
+    for (final match in RegExp(
+      r'\d+(?:\.\d+)?(?:\\pi|pi)(?:/\d+(?:\.\d+)?)?',
+    ).allMatches(normalized)) {
+      final token = match.group(0);
+      if (token != null) tokens.add(_normalizeMathToken(token));
+    }
+
+    for (final match
+        in RegExp(r'\\frac\{([^{}]+)\}\{([^{}]+)\}').allMatches(normalized)) {
+      final numerator = match.group(1);
+      final denominator = match.group(2);
+      if (numerator != null && denominator != null) {
+        tokens.add(_normalizeMathToken('$numerator/$denominator'));
+      }
+    }
+    return tokens.where((token) => token.isNotEmpty).toSet();
+  }
+
+  String _normalizeMathToken(String token) {
+    return token
+        .replaceAll('π', r'\pi')
+        .replaceAll('pi', r'\pi')
+        .replaceAllMapped(
+          RegExp(r'\\frac\{([^{}]+)\}\{([^{}]+)\}'),
+          (match) => '${match.group(1)}/${match.group(2)}',
+        )
+        .replaceAll(RegExp(r'[\\(){}\[\]\s]'), '');
   }
 
   bool _hasForbiddenPlaneAreaDrift(String text) {
@@ -3168,6 +3249,63 @@ class AiAnalysisService {
     return hasSemicircle && hasOuterArea && hasDiameterDerived && hasDifference;
   }
 
+  bool _hasFramedSemicircleDiameterSignal(
+    String? sourceQuestionText,
+    AnalysisResult? analysis,
+  ) {
+    final text = <String>[
+      sourceQuestionText ?? '',
+      ...?analysis?.aiTags,
+      ...?analysis?.knowledgePoints,
+      ...?analysis?.steps,
+      analysis?.mistakeReason ?? '',
+      analysis?.studyAdvice ?? '',
+    ].join(' ').toLowerCase();
+    final hasFramedShape = _hasAnySignal(text, <String>[
+      '外框',
+      '上边',
+      '下边',
+      '上底',
+      '下底',
+      '右边高',
+      '水平差',
+      '竖直差',
+      '左侧斜边',
+    ]);
+    final hasSemicircleDiameter = _hasAnySignal(text, <String>[
+      '半圆直径',
+      '半圆以左侧斜边为直径',
+      '左侧斜边为半圆直径',
+      '斜边为半圆直径',
+    ]);
+    return hasFramedShape && hasSemicircleDiameter;
+  }
+
+  _FramedSemicircleSpec? _framedSemicircleSpecFromSource(
+    String? sourceQuestionText,
+    AnalysisResult? analysis,
+  ) {
+    final text = <String>[
+      sourceQuestionText ?? '',
+      ...?analysis?.steps,
+    ].join(' ');
+    int? firstNumberAfter(Iterable<String> labels) {
+      for (final label in labels) {
+        final match =
+            RegExp('$label(?:长)?(?:为|是|=)?\\s*(\\d+)').firstMatch(text);
+        if (match != null) return int.tryParse(match.group(1)!);
+      }
+      return null;
+    }
+
+    final top = firstNumberAfter(const <String>['上边', '上底', '上水平边']);
+    final bottom = firstNumberAfter(const <String>['下边', '下底', '下水平边', '底边']);
+    final height = firstNumberAfter(const <String>['右边高', '右侧竖直边高', '高']);
+    if (top == null || bottom == null || height == null) return null;
+    if (top <= 0 || bottom <= 0 || height <= 0 || top == bottom) return null;
+    return _FramedSemicircleSpec(top: top, bottom: bottom, height: height);
+  }
+
   _ExerciseVariant? _solidVolumeVariant(String text) {
     if (_hasAnySignal(text, <String>['圆锥', r'\frac{1}{3}\pi'])) {
       return _ExerciseVariant.coneVolume;
@@ -3566,7 +3704,7 @@ class AiAnalysisService {
             r'外边界面积为 \(\frac{2+5}{2}\times4=14\)。左侧斜边平方为 \((5-2)^2+4^2=25\)，所以半圆面积为 \(\frac{25\pi}{8}\)，目标面积为 \(14-\frac{25\pi}{8}\)。',
         createdAt: now,
         order: 0,
-        diagramData: _compositeSemicircleDiagram('2', '5', '4'),
+        diagramData: _framedSemicircleDiagram('2', '5', '4'),
       ),
       GeneratedExercise(
         id: 'e2',
@@ -3585,7 +3723,7 @@ class AiAnalysisService {
             r'外边界面积为 \(\frac{3+7}{2}\times10=50\)。左侧斜边平方为 \((7-3)^2+10^2=116\)，半径平方为 29，半圆面积为 \(\frac{29\pi}{2}\)，目标面积为 \(50-\frac{29\pi}{2}\)。',
         createdAt: now,
         order: 1,
-        diagramData: _compositeSemicircleDiagram('3', '7', '10'),
+        diagramData: _framedSemicircleDiagram('3', '7', '10'),
       ),
       GeneratedExercise(
         id: 'e3',
@@ -3604,9 +3742,130 @@ class AiAnalysisService {
             r'外边界面积为 \(\frac{4+10}{2}\times8=56\)。左侧斜边平方为 \((10-4)^2+8^2=100\)，半径平方为 25，半圆面积为 \(\frac{25\pi}{2}\)，目标面积为 \(56-\frac{25\pi}{2}\)。',
         createdAt: now,
         order: 2,
-        diagramData: _compositeSemicircleDiagram('4', '10', '8'),
+        diagramData: _framedSemicircleDiagram('4', '10', '8'),
       ),
     ];
+  }
+
+  List<GeneratedExercise> _defaultFramedSemicircleAreaExercises(
+    String questionId,
+    DateTime now,
+    _FramedSemicircleSpec? sourceSpec,
+  ) {
+    final same = sourceSpec ??
+        const _FramedSemicircleSpec(top: 3, bottom: 7, height: 10);
+    final simple = _scaledFramedSemicircleSpec(same, difficulty: -1);
+    final hard = _scaledFramedSemicircleSpec(same, difficulty: 1);
+    return <GeneratedExercise>[
+      _framedSemicircleExercise(
+        id: 'e1',
+        questionId: questionId,
+        difficulty: '简单',
+        spec: simple,
+        createdAt: now,
+        order: 0,
+      ),
+      _framedSemicircleExercise(
+        id: 'e2',
+        questionId: questionId,
+        difficulty: '同级',
+        spec: same,
+        createdAt: now,
+        order: 1,
+      ),
+      _framedSemicircleExercise(
+        id: 'e3',
+        questionId: questionId,
+        difficulty: '提高',
+        spec: hard,
+        createdAt: now,
+        order: 2,
+      ),
+    ];
+  }
+
+  _FramedSemicircleSpec _scaledFramedSemicircleSpec(
+    _FramedSemicircleSpec source, {
+    required int difficulty,
+  }) {
+    if (difficulty < 0) {
+      final diff = math.max(3, source.horizontalDiff - 1);
+      final height = math.max(4, source.height - 2);
+      final top = math.max(2, source.top - 1);
+      return _FramedSemicircleSpec(
+        top: top,
+        bottom: top + diff,
+        height: height,
+      );
+    }
+    final diff = source.horizontalDiff + 2;
+    final height = source.height + 3;
+    final top = source.top + 1;
+    return _FramedSemicircleSpec(
+      top: top,
+      bottom: top + diff,
+      height: height,
+    );
+  }
+
+  GeneratedExercise _framedSemicircleExercise({
+    required String id,
+    required String questionId,
+    required String difficulty,
+    required _FramedSemicircleSpec spec,
+    required DateTime createdAt,
+    required int order,
+  }) {
+    final area = _formatPiOver8(spec.diameterSquared);
+    final distractors = <String>[
+      _formatPiOver8(spec.diameterSquared * 2),
+      _formatPiOver8(math.max(1, spec.diameterSquared - 8)),
+      '${spec.diameterSquared}π',
+    ];
+    return GeneratedExercise(
+      id: id,
+      questionId: questionId,
+      generationMode: ExerciseGenerationMode.practice,
+      difficulty: difficulty,
+      question:
+          '如图，上边长为 ${spec.top}，下边长为 ${spec.bottom}，右边高为 ${spec.height}，左侧斜边为半圆直径。求该半圆的面积。',
+      options: <String>[
+        'A. ${distractors[0]}',
+        'B. $area',
+        'C. ${distractors[1]}',
+        'D. ${distractors[2]}',
+      ],
+      answer: 'B',
+      explanation:
+          '水平差为 ${spec.horizontalDiff}，高为 ${spec.height}，由勾股定理得直径平方为 ${spec.diameterSquared}，半圆面积为 $area。',
+      createdAt: createdAt,
+      order: order,
+      diagramData: _framedSemicircleDiagram(
+        spec.top.toString(),
+        spec.bottom.toString(),
+        spec.height.toString(),
+        targetLabel: '求半圆面积',
+      ),
+    );
+  }
+
+  String _formatPiOver8(int numerator) {
+    final divisor = _gcd(numerator, 8);
+    final reducedNumerator = numerator ~/ divisor;
+    final reducedDenominator = 8 ~/ divisor;
+    if (reducedDenominator == 1) return '${reducedNumerator}π';
+    return '${reducedNumerator}π/$reducedDenominator';
+  }
+
+  int _gcd(int a, int b) {
+    var x = a.abs();
+    var y = b.abs();
+    while (y != 0) {
+      final next = x % y;
+      x = y;
+      y = next;
+    }
+    return x == 0 ? 1 : x;
   }
 
   List<GeneratedExercise> _defaultAnnulusAreaExercises(
@@ -3825,6 +4084,15 @@ class AiAnalysisService {
     String bottom,
     String height,
   ) {
+    return _framedSemicircleDiagram(top, bottom, height);
+  }
+
+  Map<String, dynamic> _framedSemicircleDiagram(
+    String top,
+    String bottom,
+    String height, {
+    String targetLabel = '求此区域',
+  }) {
     return <String, dynamic>{
       'elements': [
         {
@@ -3858,7 +4126,7 @@ class AiAnalysisService {
         {'type': 'text', 'text': '半圆', 'x': 0.48, 'y': 0.55, 'role': 'label'},
         {
           'type': 'text',
-          'text': '求此区域',
+          'text': targetLabel,
           'x': 0.68,
           'y': 0.39,
           'role': 'target',
@@ -4234,6 +4502,13 @@ class AiAnalysisService {
         return _defaultCompositeSemicircleAreaExercises(questionId, now);
       }
       if (profile.variant == _ExerciseVariant.semicircleArea) {
+        if (_hasFramedSemicircleDiameterSignal(sourceQuestionText, analysis)) {
+          return _defaultFramedSemicircleAreaExercises(
+            questionId,
+            now,
+            _framedSemicircleSpecFromSource(sourceQuestionText, analysis),
+          );
+        }
         return _defaultSemicircleAreaExercises(questionId, now);
       }
       if (profile.variant == _ExerciseVariant.annulusOrShadedArea) {

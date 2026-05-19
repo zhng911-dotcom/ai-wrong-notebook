@@ -9,71 +9,276 @@ import 'package:smart_wrong_notebook/src/domain/models/analysis_result.dart';
 import 'package:smart_wrong_notebook/src/domain/models/generated_exercise.dart';
 
 void main() {
+  group('fixture regression config', () {
+    test('builds single fixture case from environment', () {
+      final cases = _fixtureCasesFromEnvironment(<String, String>{
+        'AI_FIXTURE_IMAGE': '/tmp/example.png',
+        'AI_FIXTURE_SUBJECT': 'math',
+        'AI_FIXTURE_TEXT': '请识别这道数学题。',
+      });
+
+      expect(cases, hasLength(1));
+      expect(cases.single.id, 'example');
+      expect(cases.single.imagePath, '/tmp/example.png');
+      expect(cases.single.subject, 'math');
+      expect(cases.single.prompt, '请识别这道数学题。');
+    });
+
+    test('builds default local batch fixture cases', () {
+      final cases = _fixtureCasesFromEnvironment(
+        const <String, String>{'AI_FIXTURE_SET': 'local'},
+        fixtureRoot: 'test/fixtures',
+      );
+
+      expect(cases.map((fixture) => fixture.id), contains('semicircle'));
+      expect(cases.map((fixture) => fixture.id), contains('shuxue-jihe'));
+      expect(cases.map((fixture) => fixture.id), contains('duoti'));
+      expect(cases.map((fixture) => fixture.id), contains('wuli-dianzu'));
+      expect(cases.map((fixture) => fixture.id), contains('yuwen'));
+      expect(cases.map((fixture) => fixture.id), contains('yingyu'));
+      expect(
+        cases.singleWhere((fixture) => fixture.id == 'wuli-dianzu').subject,
+        'physics',
+      );
+    });
+
+    test('builds explicit json batch fixture cases', () {
+      final cases = _fixtureCasesFromEnvironment(<String, String>{
+        'AI_FIXTURE_CASES': jsonEncode(<Map<String, String>>[
+          <String, String>{
+            'id': 'case-a',
+            'image': '/tmp/a.png',
+            'subject': 'math',
+            'text': '题目 A',
+          },
+          <String, String>{
+            'image': '/tmp/b.png',
+            'subject': 'english',
+            'text': '题目 B',
+          },
+        ]),
+      });
+
+      expect(cases, hasLength(2));
+      expect(cases.first.id, 'case-a');
+      expect(cases.last.id, 'b');
+      expect(cases.last.subject, 'english');
+      expect(cases.last.prompt, '题目 B');
+    });
+  });
+
   test('analyzes a local image fixture with app AI service', () async {
-    final imagePath = _env('AI_FIXTURE_IMAGE');
-    if (imagePath == null || imagePath.trim().isEmpty) {
-      markTestSkipped('Set AI_FIXTURE_IMAGE to run local image regression.');
+    final fixtureCases = _fixtureCasesFromEnvironment(Platform.environment);
+    if (fixtureCases.isEmpty) {
+      markTestSkipped(
+        'Set AI_FIXTURE_IMAGE, AI_FIXTURE_CASES, or AI_FIXTURE_SET=local '
+        'to run local image regression.',
+      );
       return;
     }
-
-    final imageFile = File(imagePath);
-    expect(imageFile.existsSync(), isTrue, reason: 'Image file must exist.');
 
     final config = _readConfigFromEnvironment();
     final service = AiAnalysisService(
       settingsRepository: _ToolSettingsRepository(config),
     );
 
-    final result = await service.analyzeExtractedQuestion(
-      correctedText: _env('AI_FIXTURE_TEXT') ?? '请根据图片识别题目并解答。',
-      subjectName: _env('AI_FIXTURE_SUBJECT') ?? 'math',
-      imagePath: imageFile.path,
-    );
-    // ignore: avoid_print
-    print(
-        '[TEST] result type: ${result.runtimeType}, isParsed: ${result is ParsedAnalysisResult}');
-    final generatedExercises = result is ParsedAnalysisResult
-        ? service.extractGeneratedExercisesFromContent(
-            result.rawContent,
-            questionId: 'fixture',
-            analysis: result,
-            sourceQuestionText: _env('AI_FIXTURE_TEXT'),
-          )
-        : service.extractGeneratedExercises(
-            result,
-            questionId: 'fixture',
-            sourceQuestionText: _env('AI_FIXTURE_TEXT'),
-          );
-    // ignore: avoid_print
-    print('[TEST] generatedExercises count: ${generatedExercises.length}');
-    for (final ex in generatedExercises) {
+    final reports = <Map<String, dynamic>>[];
+    for (final fixture in fixtureCases) {
+      final imageFile = File(fixture.imagePath);
+      expect(
+        imageFile.existsSync(),
+        isTrue,
+        reason: 'Image file must exist for fixture ${fixture.id}.',
+      );
+
+      // ignore: avoid_print
+      print('\n[TEST] fixture: ${fixture.id}');
+
+      final result = await service.analyzeExtractedQuestion(
+        correctedText: fixture.prompt,
+        subjectName: fixture.subject,
+        imagePath: imageFile.path,
+      );
       // ignore: avoid_print
       print(
-          '[TEST] exercise: ${ex.id}, hasDiagram: ${ex.diagramData != null}, q: ${ex.question.substring(0, ex.question.length.clamp(0, 40))}');
-    }
-
-    final report = _buildReport(result, generatedExercises);
-    const encoder = JsonEncoder.withIndent('  ');
-    // ignore: avoid_print
-    print(encoder.convert(report));
-
-    final qualityGate = report['qualityGate']! as Map<String, dynamic>;
-    final warnings = qualityGate['warnings'] as List;
-    if (warnings.isNotEmpty) {
+          '[TEST] result type: ${result.runtimeType}, isParsed: ${result is ParsedAnalysisResult}');
+      final generatedExercises = result is ParsedAnalysisResult
+          ? service.extractGeneratedExercisesFromContent(
+              result.rawContent,
+              questionId: fixture.id,
+              analysis: result,
+              sourceQuestionText: fixture.prompt,
+            )
+          : service.extractGeneratedExercises(
+              result,
+              questionId: fixture.id,
+              sourceQuestionText: fixture.prompt,
+            );
       // ignore: avoid_print
-      print('\n⚠️  WARNINGS (needs manual review, not a test failure):');
-      for (final w in warnings) {
+      print('[TEST] generatedExercises count: ${generatedExercises.length}');
+      for (final ex in generatedExercises) {
         // ignore: avoid_print
-        print('  - $w');
+        print(
+            '[TEST] exercise: ${ex.id}, hasDiagram: ${ex.diagramData != null}, q: ${ex.question.substring(0, ex.question.length.clamp(0, 40))}');
       }
+
+      final report = _buildReport(result, generatedExercises)
+        ..['fixture'] = fixture.toJson();
+      reports.add(report);
+
+      const encoder = JsonEncoder.withIndent('  ');
+      // ignore: avoid_print
+      print(encoder.convert(report));
+
+      final qualityGate = report['qualityGate']! as Map<String, dynamic>;
+      final warnings = qualityGate['warnings'] as List;
+      if (warnings.isNotEmpty) {
+        // ignore: avoid_print
+        print('\n⚠️  WARNINGS (needs manual review, not a test failure):');
+        for (final w in warnings) {
+          // ignore: avoid_print
+          print('  - $w');
+        }
+      }
+
+      expect(
+        qualityGate['passed'],
+        isTrue,
+        reason:
+            'Fixture ${fixture.id}: ${(qualityGate['issues'] as List).join('\n')}',
+      );
     }
 
-    expect(
-      qualityGate['passed'],
-      isTrue,
-      reason: (qualityGate['issues'] as List).join('\n'),
-    );
+    // ignore: avoid_print
+    print(
+        '\n[TEST] fixture summary: ${reports.length} fixture(s) passed gate.');
   }, timeout: const Timeout(Duration(minutes: 5)));
+}
+
+class _FixtureCase {
+  const _FixtureCase({
+    required this.id,
+    required this.imagePath,
+    required this.subject,
+    required this.prompt,
+  });
+
+  final String id;
+  final String imagePath;
+  final String subject;
+  final String prompt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'id': id,
+        'imagePath': imagePath,
+        'subject': subject,
+        'prompt': prompt,
+      };
+}
+
+List<_FixtureCase> _fixtureCasesFromEnvironment(
+  Map<String, String> environment, {
+  String fixtureRoot = 'test/fixtures',
+}) {
+  final rawCases = environment['AI_FIXTURE_CASES']?.trim();
+  if (rawCases != null && rawCases.isNotEmpty) {
+    final decoded = jsonDecode(rawCases);
+    if (decoded is! List) {
+      fail('AI_FIXTURE_CASES must be a JSON array.');
+    }
+    return decoded
+        .whereType<Map>()
+        .map((item) => _fixtureCaseFromMap(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
+  final imagePath = environment['AI_FIXTURE_IMAGE']?.trim();
+  if (imagePath != null && imagePath.isNotEmpty) {
+    return <_FixtureCase>[
+      _FixtureCase(
+        id: _fixtureIdFromPath(imagePath),
+        imagePath: imagePath,
+        subject: environment['AI_FIXTURE_SUBJECT']?.trim().isNotEmpty == true
+            ? environment['AI_FIXTURE_SUBJECT']!.trim()
+            : 'math',
+        prompt: environment['AI_FIXTURE_TEXT']?.trim().isNotEmpty == true
+            ? environment['AI_FIXTURE_TEXT']!.trim()
+            : '请根据图片识别题目并解答。',
+      ),
+    ];
+  }
+
+  if (environment['AI_FIXTURE_SET']?.trim().toLowerCase() == 'local') {
+    return _defaultLocalFixtureCases(fixtureRoot);
+  }
+
+  return const <_FixtureCase>[];
+}
+
+_FixtureCase _fixtureCaseFromMap(Map<String, dynamic> item) {
+  final image = (item['image'] ?? item['imagePath'])?.toString().trim() ?? '';
+  if (image.isEmpty) fail('Each AI_FIXTURE_CASES item must include image.');
+  final text = (item['text'] ?? item['prompt'])?.toString().trim() ?? '';
+  return _FixtureCase(
+    id: item['id']?.toString().trim().isNotEmpty == true
+        ? item['id'].toString().trim()
+        : _fixtureIdFromPath(image),
+    imagePath: image,
+    subject: item['subject']?.toString().trim().isNotEmpty == true
+        ? item['subject'].toString().trim()
+        : 'math',
+    prompt: text.isNotEmpty ? text : '请根据图片识别题目并解答。',
+  );
+}
+
+List<_FixtureCase> _defaultLocalFixtureCases(String fixtureRoot) {
+  String path(String name) => '$fixtureRoot/$name';
+  return <_FixtureCase>[
+    _FixtureCase(
+      id: 'semicircle',
+      imagePath: path('semicircle.png'),
+      subject: 'math',
+      prompt: '图中标注上边为3、底边为7、右边高为10，图内为半圆，求图中括号所示区域面积。',
+    ),
+    _FixtureCase(
+      id: 'shuxue-jihe',
+      imagePath: path('shuxue-jihe.png'),
+      subject: 'math',
+      prompt:
+          '请识别图片中的数学几何题，整理完整题干；若需要读图推断，请标出不确定项，并生成同题型举一反三练习，图形题练习应包含 diagramData。',
+    ),
+    _FixtureCase(
+      id: 'duoti',
+      imagePath: path('duoti.png'),
+      subject: 'math',
+      prompt: '请识别图片中的所有题目，按题号分别整理题干并分析；如果图片包含多道题，请不要只分析其中一道。',
+    ),
+    _FixtureCase(
+      id: 'wuli-dianzu',
+      imagePath: path('wuli-dianzu.png'),
+      subject: 'physics',
+      prompt: '请识别图片中的物理电学题，整理题干并分析电阻/电路关系，给出最终答案和举一反三练习。',
+    ),
+    _FixtureCase(
+      id: 'yuwen',
+      imagePath: path('yuwen.png'),
+      subject: 'chinese',
+      prompt: '请识别图片中的语文题，整理完整题干并分析作答思路，生成同题型举一反三练习。',
+    ),
+    _FixtureCase(
+      id: 'yingyu',
+      imagePath: path('yingyu.png'),
+      subject: 'english',
+      prompt: '请识别图片中的英语题，整理完整题干并分析作答思路，生成同题型举一反三练习。',
+    ),
+  ];
+}
+
+String _fixtureIdFromPath(String imagePath) {
+  final normalized = imagePath.replaceAll('\\', '/');
+  final filename = normalized.split('/').last;
+  final dot = filename.lastIndexOf('.');
+  return dot > 0 ? filename.substring(0, dot) : filename;
 }
 
 AiProviderConfig _readConfigFromEnvironment() {
